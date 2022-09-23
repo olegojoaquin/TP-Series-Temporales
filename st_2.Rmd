@@ -1,0 +1,349 @@
+---
+title: "st"
+date: "`r format(Sys.time(), '%d de %B del %Y')`"
+#runtime: shiny
+output:
+  html_document:
+    df_print: paged
+    #toc: yes
+  pdf_document:
+    fig_caption: yes
+    fig_crop: no
+    number_sections: yes
+    #toc: yes
+  word_document: 
+    fig_caption: yes
+    #reference_doc: referword-doc.docx
+    #toc: yes
+header-includes: \usepackage[spanish]{babel}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+knitr::opts_chunk$set(message = F)
+knitr::opts_chunk$set(warning = F)
+
+knitr::opts_chunk$set(fig.width = 9)
+knitr::opts_chunk$set(fig.height = 9)
+knitr::opts_chunk$set(fig.align = "center")
+
+library(compareGroups)
+library(pander)
+library(tidyverse)
+library(kableExtra)
+library(table1)
+library(ggplot2)
+library(GGally)
+library(ggpubr)
+library(readxl)
+library(readr)
+
+# packages for this tutorial
+# first approach
+library(feasts)
+library(tsibble)
+library(lubridate)
+
+# second approach
+library(TSstudio)
+library(plotly)
+
+# third approach
+library(tidyverse)
+library(timetk)
+library(lubridate)
+library(openair)
+
+```
+
+https://www.lobdata.com.br/2020/09/15/how-to-perform-correlation-analysis-in-time-series-data-using-r/
+
+```{r}
+library(readxl)
+df <- read_excel("AirQualityUCI.xlsx")
+```
+
+```{r message=FALSE}
+library(tsibble)
+library(imputeTS)
+library(feasts)
+library(tidyverse)
+library(openintro)
+library(GGally)
+#install.packages("corrr")
+library(corrr)
+library(knitr)
+library(tidymodels)
+library(gridExtra)
+library(rsample)
+library(ggplot2)
+library(GGally)
+library(RColorBrewer)
+library(ggcorrplot)
+library(forcats)
+library(robustbase)
+library(fpp3)
+library(tseries)
+library(slider)
+library(forecast)
+```
+
+# Joaco
+
+El dataset cuenta con 16 variables, una para la fecha y otra para la hora y 14 señales de sensores de gases.
+
+Construyo una variable DateTime que luego utilizaremos como indice en un tsibble. También se aprovecha para borrar aquellos registros que tienen la variable temporal nula (al analizarlo esto resulto que eran filas vacias completas, parece un error de como se consiguió la data).
+
+```{r}
+#setwd("~/Documents/Data-Mining/Series_Temporales/TP/")
+df <- read.csv("AirQualityUCI.csv")
+#df <- read_delim("AirQualityUCI.csv",  delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+#df$DateTime <-paste(df$Date, df$Time)
+#df$DateTime <-as.POSIXct(df$DateTime)
+df$DateTime <-as.POSIXct(paste(df$Date, df$Time), format="%Y-%m-%d %H:%M:%S")
+df <- df[which(is.na(df$DateTime) ==FALSE),]
+df <- df  %>% as_tsibble(index= DateTime)
+gases <- c("CO.GT.","PT08.S1.CO.","NMHC.GT.","C6H6.GT.","PT08.S2.NMHC.","NOx.GT.","PT08.S3.NOx.","NO2.GT.",
+           "PT08.S4.NO2.","PT08.S5.O3.","T","RH","AH" )
+gases_filtro <- c("PT08.S1.CO.","C6H6.GT.","PT08.S2.NMHC.","PT08.S3.NOx.","PT08.S4.NO2.","PT08.S5.O3.","T","RH","AH" )
+```
+
+Analizamos si los gases tienen registros faltantes. Estos por defecto toman el valor -200.
+```{r}
+df[df == -200] <- NA
+sapply(df, function(x){sum(is.na(x)/dim(df)[1])})
+```
+
+Me quedo con aquellos que tienen menos del 5% de valores faltantes. 
+
+```{r}
+autoplot(df,PT08.S1.CO. ) + labs( x = "DateTime")
+autoplot(df,C6H6.GT. )   + labs( x = "DateTime")
+autoplot(df,PT08.S2.NMHC. ) + labs( x = "DateTime") 
+autoplot(df,PT08.S3.NOx. ) + labs( x = "DateTime")
+autoplot(df,PT08.S4.NO2. )   + labs( x = "DateTime")
+autoplot(df,PT08.S5.O3. ) + labs( x = "DateTime") 
+autoplot(df,T ) + labs( x = "DateTime")
+autoplot(df,RH )   + labs( x = "DateTime")
+autoplot(df,AH ) + labs( x = "DateTime") 
+```
+
+#Temperatura
+
+Analizo este porque quiero ver 1 señal y extrapolo al resto.
+
+Arranco reemplazando nulos imputando por un moving average
+```{r}
+df$T_imp <- na_ma(df$T, k = 7, weighting = "exponential")
+```
+
+Genero la descomposicion de componentes para ver si tiene tendencia y estacionalidad.
+
+```{r}
+dcmp <- df %>%
+  model(stl = STL(T_imp))
+components(dcmp) %>% autoplot()
+```
+
+Si bien la señal tiene estas componentes vemos que tiene una frecuencia de muestreo super alta. Conviene hacer algun suavizado. Voy a hacer suavizado de Medias Moviles variando distintos K.
+
+
+```{r}
+df_movil <- df %>%
+    mutate(
+    "T_1" = slider::slide_dbl(T_imp, mean,
+                .before = 1, .after = 1, .complete = TRUE)
+  )
+df_movil <- df_movil %>%
+    mutate(
+    "T_3_rolling" = slider::slide_dbl(T_imp, mean,
+                .before = 2, .after = 0, .complete = TRUE)
+  )
+df_movil <- df_movil %>%
+    mutate(
+   "T_2" = slider::slide_dbl(T_imp, mean,
+                .before = 2, .after = 2, .complete = TRUE)
+  )
+df_movil <- df_movil %>%
+    mutate(
+   "T_5" = slider::slide_dbl(T_imp, mean,
+                .before = 5, .after = 5, .complete = TRUE)
+  )
+df_movil <- df_movil %>%
+    mutate(
+   "T_6" = slider::slide_dbl(T_imp, mean,
+                .before = 6, .after = 6, .complete = TRUE)
+  )
+df_movil <- df_movil %>%
+    mutate(
+   "T_612" = slider::slide_dbl(T_imp, mean,
+                .before = 12, .after = 12, .complete = TRUE)
+  )
+df_movil <- df_movil %>%
+    mutate(
+    "T_5_rolling" = slider::slide_dbl(T_imp, mean,
+                .before = 5, .after = 0, .complete = TRUE)
+  )
+df_movil <- df_movil %>%
+    mutate(
+    "T_6_rolling" = slider::slide_dbl(T_imp, mean,
+                .before = 6, .after = 0, .complete = TRUE)
+  )
+df_movil <- df_movil %>%
+    mutate(
+    "T_12_rolling" = slider::slide_dbl(T_imp, mean,
+                .before = 12, .after = 0, .complete = TRUE)
+  )
+```
+
+```{r}
+#colors <- c("T_imp" = "black", "k_1" = "blue", "k_3_rolling" = "orange", "k_2"="green","k_5"="red")
+df_movil %>% autoplot(T_imp, colour = 'black') +   labs(y  = "Temperatura", x= "DateTime") 
+df_movil %>% autoplot(T_5, colour = 'cyan') +   labs(y  = "Temperatura", x= "DateTime") 
+df_movil %>% autoplot(T_12_rolling, colour = 'orange') +   labs(y  = "Temperatura", x= "DateTime") 
+df_movil %>% autoplot(T_6, colour = 'blue') +   labs(y  = "Temperatura", x= "DateTime") 
+df_movil %>% autoplot(T_6_rolling, colour = 'red') +   labs(y  = "Temperatura", x= "DateTime") 
+df_movil %>% autoplot(T_612, colour = 'red') +   labs(y  = "Temperatura", x= "DateTime") 
+#df_movil %>%
+#  autoplot(T_imp, colour = "black") +
+#  geom_line(aes(y = T_5), colour = "red") +
+#  geom_line(aes(y = T_5_rolling), colour = "cyan") +
+#  labs(y  = "Temperatura", x= "DateTime")+ 
+#  scale_color_manual(values=colors)#,labels=c("Pasajeros","k_1","k_3_rolling","k_2","k_5"))
+```
+
+
+
+```{r}
+dcmp <- df_movil[which(is.na(df_movil$T_612)==FALSE),] %>%
+  model(stl = STL(T_612))
+components(dcmp) %>% autoplot()
+```
+
+```{r}
+df_movil %>%
+  ACF(T_612, lag_max = 48) %>%
+  autoplot() + labs(title="ACF",x='Lag',y='ACF')
+```
+
+# Maca
+
+```{r}
+dataset = df[, c(16, 3:15)]
+dataset$DateTime = as.POSIXct(dataset$DateTime)
+dataset = dataset[, c(1:3, 4, 6, 5, 7:14)]
+```
+
+```{r}
+dataset_columns = c('date', 'co', 'co_s', 'NMHC', 'NMHC_s', 'c6h6',
+                    'nox', 'nox_s', 'no2', 'no2_s', 'o3_s','temp', 'RH%', 'AH')
+colnames(dataset) = dataset_columns
+```
+
+
+```{r}
+# Summary Plot of the dataset
+summaryPlot(dataset, period = 'days')
+```
+
+
+```{r}
+# Trendlevel plot
+trendLevel(dataset, pollutant = 'AH', auto.text = TRUE, main = 'AH')
+trendLevel(dataset, pollutant = 'no2_s', auto.text = TRUE, main = 'no2_s')
+```
+
+
+```{r}
+# Calender plot
+calendarPlot(dataset, pollutant = 'co', year = 2004)
+calendarPlot(dataset, pollutant = 'co', year = 2005)
+calendarPlot(dataset, pollutant = 'NMHC', year = 2004)
+#calendarPlot(dataset, pollutant = 'NMHC', year = 2005)
+calendarPlot(dataset, pollutant = 'c6h6', year = 2004)
+calendarPlot(dataset, pollutant = 'c6h6', year = 2005)
+calendarPlot(dataset, pollutant = 'nox', year = 2004)
+calendarPlot(dataset, pollutant = 'nox', year = 2005)
+calendarPlot(dataset, pollutant = 'no2', year = 2004)
+calendarPlot(dataset, pollutant = 'no2', year = 2005)
+```
+
+
+```{r}
+# Timevariation plot
+timeVariation(dataset, pollutant = 'co', auto.text = TRUE, main = 'CO TimeVariation plot')
+timeVariation(dataset, pollutant = 'c6h6', auto.text = TRUE, main = 'C6H6 TimeVariation plot')
+timeVariation(dataset, pollutant = 'nox', auto.text = TRUE, main = 'NOx TimeVariation plot')
+timeVariation(dataset, pollutant = 'no2', auto.text = TRUE, main = 'NO2 TimeVariation plot')
+
+# Trendlevel
+trendLevel(mydata = dataset, pollutant = 'co', auto.text = TRUE, main = 'CO TrendLevel plot')
+trendLevel(mydata = dataset, pollutant = 'c6h6', auto.text = TRUE, main = 'C6H6 TrendLevel plot')
+trendLevel(mydata = dataset, pollutant = 'nox', auto.text = TRUE, main = 'NOx TrendLevel plot')
+trendLevel(mydata = dataset, pollutant = 'no2', auto.text = TRUE, main = 'NO2 TrendLevel plot')
+
+
+
+
+
+```
+
+```{r}
+timePlot(selectByDate(dataset),
+         pollutant = c('co', 'co_s', 'NMHC', 'NMHC_s', 'c6h6',
+                    'nox', 'nox_s', 'no2', 'no2_s', 'o3_s'),
+         y.relation = "free")
+```
+
+```{r}
+timePlot(dataset, 
+         pollutant = c('co', 'co_s', 'NMHC', 'NMHC_s', 'c6h6',
+                    'nox', 'nox_s', 'no2', 'no2_s', 'o3_s'),
+         avg.time = "month", normalise = "1/1/1998", 
+         lwd = 4, lty = 1,
+         group = TRUE, ylim = c(0, 120))
+```
+
+
+#cr
+```{r}
+df2<-df[3:17]
+ts_aire <- ts(data = df2[, c(11:13)], # selecting 2 variables
+   start = c(2004, 03,10), # start date
+   end = c(2005, 04,04), # end date
+   frequency = 9357)
+
+```
+
+```{r}
+timeVariation(dataset, 
+              pollutant = c('co', 'co_s', 'NMHC', 'NMHC_s', 'c6h6',
+                    'nox', 'nox_s', 'no2', 'no2_s', 'o3_s'),
+              normalise = TRUE)
+```
+
+```{r}
+ts_info(ts_aire)
+```
+```{r}
+# ts_plot(ts_aire,
+#         title = "Monthly questions on Stack Overflow platform",
+#         Ytitle = "# Questions",
+#         Xtitle = "Year")
+```
+
+Relative humidity (RH) is a measure of how much water vapor is in a water-air mixture compared to the maximum amount possible. RH is a ratio of the humidity ratio of a particular water-air mixture compared to the saturation humidity ratio at a given temperature (dry-bulb).
+
+```{r}
+library(ggplot2)
+library(GGally)
+dataset2=dataset
+dataset2$temp_d<-cut(dataset2$temp, breaks = 3, labels = c("Low","Medium","High"))
+dataset2[,c(3,5,8,10,11,15)] %>%  ggpairs(columns=names(dataset[,c(3,5,8,10,11)]), 
+                 aes(color = temp_d ),
+                 upper = list(continuous = wrap(ggally_cor, size = 2, displayGrid = FALSE,alpha=1)),
+                 lower = list(combo = wrap("facethist", bins = 30)),
+                 diag = list(continuous = wrap("densityDiag", alpha = 0.5)),axisLabels="show")  +theme_minimal() 
+```
+
