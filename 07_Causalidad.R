@@ -77,7 +77,7 @@ grangertest(CO_S_MA3 ~ NOX_S_MA3, order = 60, data = df_g)
 
 #reverse
 grangertest(NOX_S_MA3 ~ CO_S_MA3, order = 60, data = df_g)
-#p-valor=2.2e-16 -> menora 0.05, rechazo la hipotesis nula
+#p-valor=2.2e-16 -> menor a 0.05, rechazo la hipotesis nula
 
 #CO_S_MA3 y NO2_S_MA3
 grangertest(CO_S_MA3 ~ NO2_S_MA3, order = 60, data = df_g)
@@ -120,4 +120,31 @@ grangertest(O3_S_MA3 ~ NMHC_S_MA3, order = 60, data = df_g)
 #p-valor=0.0001399 -> menor a 0.05, no rechazo la hipotesis nula
 
 
+###########################
+#CAUSAL IMPACT
+###########################
+
+library(CausalImpact)
+
+matplot(df_g[,2:9], type = "l")
+
+#Uso un ejemplo con causalidad CO_S_MA3 ~ NMHC_S_MA3
+data <- df_g[c("DATE","CO_S_MA3","NMHC_S_MA3")]
+
+pre.period <- as.Date(c("2004-03-10", "2005-02-15"))
+post.period <- as.Date(c("2005-02-16", "2005-04-04"))
+
+impact <- CausalImpact(data, pre.period, post.period)
+plot(impact)
+summary(impact)
+
+#Uso un ejemplo sin causalidad NMHC_S_MA3 ~ O3_S_MA3
+data1 <- df_g[c("DATE","NMHC_S_MA3","O3_S_MA3")]
+
+pre.period <- as.Date(c("2004-03-10", "2005-02-15"))
+post.period <- as.Date(c("2005-02-16", "2005-04-04"))
+
+impact1 <- CausalImpact(data1, pre.period, post.period)
+plot(impact1)
+summary(impact1)
 
